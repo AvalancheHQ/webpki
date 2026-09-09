@@ -69,6 +69,7 @@ untrusted = "0.9"
 base64 = "0.23"
 bencher = "0.1.5"
 chrono = "0.4"
+divan = { version = "5.0.1", package = "codspeed-divan-compat" }
 limbo-harness-support = { git = "https://github.com/C2SP/x509-limbo", rev = "21cc053f7edbd22e0e8d8a98a7fe13918912af9d" }
 once_cell = "1.17.2"
 rcgen = { version = "0.14.7", default-features = false, features = ["aws_lc_rs"] }
@@ -99,6 +100,12 @@ codegen-units = 1
 name = "benchmarks"
 path = "benches/benchmark.rs"
 harness = false
+
+[[bench]]
+name = "webpki"
+path = "benches/webpki.rs"
+harness = false
+required-features = ["alloc"]
 
 [package.metadata.cargo-semver-checks.lints]
 enum_variant_marked_deprecated = "warn"
