@@ -1,6 +1,7 @@
 [![Build Status](https://github.com/rustls/webpki/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rustls/webpki/actions/workflows/ci.yml?query=branch%3Amain)
 [![Coverage Status (codecov.io)](https://codecov.io/gh/rustls/webpki/branch/main/graph/badge.svg)](https://codecov.io/gh/rustls/webpki/)
 [![Documentation](https://docs.rs/rustls-webpki/badge.svg)](https://docs.rs/rustls-webpki/)
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/AvalancheHQ/webpki?utm_source=badge)
 [![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/MCSB76RU96)
 
 webpki is a library that validates Web PKI (TLS/SSL) certificates. It's
