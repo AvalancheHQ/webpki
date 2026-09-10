@@ -1,6 +1,4 @@
 #[cfg(feature = "alloc")]
-use alloc::collections::BTreeMap;
-#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::fmt::Debug;
@@ -195,9 +193,9 @@ impl PartialOrd for CrlNumber<'_> {
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, Hash)]
 pub struct OwnedCertRevocationList {
-    /// A map of the revoked certificates contained in then CRL, keyed by the DER encoding
-    /// of the revoked cert's serial number.
-    revoked_certs: BTreeMap<Vec<u8>, OwnedRevokedCert>,
+    /// The revoked certificates contained in the CRL, sorted by the DER encoding of the
+    /// revoked cert's serial number so that they can be found by binary search.
+    revoked_certs: Vec<OwnedRevokedCert>,
 
     issuer: Vec<u8>,
 
@@ -230,12 +228,13 @@ impl OwnedCertRevocationList {
 
     fn find_serial(&self, serial: &[u8]) -> Result<Option<BorrowedRevokedCert<'_>>, Error> {
         // note: this is infallible for the owned representation because we process all
-        // revoked certificates at the time of construction to build the `revoked_certs` map,
-        // returning any encountered errors at that time.
+        // revoked certificates at the time of construction to build the sorted
+        // `revoked_certs` list, returning any encountered errors at that time.
         Ok(self
             .revoked_certs
-            .get(serial)
-            .map(|owned_revoked_cert| owned_revoked_cert.borrow()))
+            .binary_search_by(|revoked_cert| cmp_serial(&revoked_cert.serial_number, serial))
+            .ok()
+            .map(|index| self.revoked_certs[index].borrow()))
     }
 }
 
@@ -281,14 +280,44 @@ impl<'a> BorrowedCertRevocationList<'a> {
     /// certificates in the CRL are malformed or contain unsupported features.
     #[cfg(feature = "alloc")]
     pub fn to_owned(&self) -> Result<OwnedCertRevocationList, Error> {
-        // Parse and collect the CRL's revoked cert entries, ensuring there are no errors. With
-        // the full set in-hand, create a lookup map by serial number for fast revocation checking.
-        let revoked_certs = self
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?
+        // Parse and collect the CRL's revoked cert entries, ensuring there are no errors.
+        let revoked_certs = self.into_iter().collect::<Result<Vec<_>, _>>()?;
+
+        // With the full set in-hand, sort the entries by serial number so that revocation
+        // checking can find a serial number with a binary search.
+        //
+        // Rather than sorting the entries themselves, sort an index of (leading serial
+        // number bytes, position) pairs: the pairs are cheaper to move around than the
+        // entries, and comparing them rarely needs to look at the serial numbers at all.
+        // The position is used as a tie breaker so that the order is deterministic.
+        let mut index = revoked_certs
             .iter()
-            .map(|revoked_cert| (revoked_cert.serial_number.to_vec(), revoked_cert.to_owned()))
-            .collect::<BTreeMap<_, _>>();
+            .enumerate()
+            .map(|(position, cert)| (serial_prefix(cert.serial_number), position))
+            .collect::<Vec<_>>();
+        index.sort_unstable_by(|&(a_prefix, a_pos), &(b_prefix, b_pos)| {
+            a_prefix.cmp(&b_prefix).then_with(|| {
+                revoked_certs[a_pos]
+                    .serial_number
+                    .cmp(revoked_certs[b_pos].serial_number)
+                    .then(a_pos.cmp(&b_pos))
+            })
+        });
+
+        // Convert the entries to their owned representation in serial number order, so that
+        // the owned serial numbers are allocated in the order they are looked up in.
+        // Duplicate serial numbers are not expected, but if present the last entry for a
+        // given serial number is kept, matching the behaviour of a map built by inserting
+        // each entry in turn.
+        let mut owned_certs = Vec::<OwnedRevokedCert>::with_capacity(index.len());
+        for &(_, position) in &index {
+            let cert = &revoked_certs[position];
+            match owned_certs.last_mut() {
+                Some(last) if last.serial_number == cert.serial_number => *last = cert.to_owned(),
+                _ => owned_certs.push(cert.to_owned()),
+            }
+        }
+        let revoked_certs = owned_certs;
 
         Ok(OwnedCertRevocationList {
             signed_data: self.signed_data.to_owned(),
@@ -724,6 +753,33 @@ impl<'a> IssuingDistributionPoint<'a> {
         }
 
         false
+    }
+}
+
+/// The leading bytes of a DER encoded serial number, zero padded, as a big endian integer.
+///
+/// Comparing two prefixes orders the serial numbers they were taken from in the same way
+/// `<[u8]>::cmp` does, unless the prefixes are equal, in which case the serial numbers have to
+/// be compared to break the tie.
+#[cfg(feature = "alloc")]
+#[inline]
+fn serial_prefix(serial: &[u8]) -> u64 {
+    let mut prefix = [0u8; 8];
+    let len = core::cmp::min(serial.len(), prefix.len());
+    prefix[..len].copy_from_slice(&serial[..len]);
+    u64::from_be_bytes(prefix)
+}
+
+/// Compare two DER encoded serial numbers in the same order as `<[u8]>::cmp`.
+///
+/// Serial numbers usually differ in their first byte, so that case is handled inline to avoid
+/// the cost of a full slice comparison.
+#[cfg(feature = "alloc")]
+#[inline]
+fn cmp_serial(a: &[u8], b: &[u8]) -> Ordering {
+    match (a.first(), b.first()) {
+        (Some(a0), Some(b0)) if a0 != b0 => a0.cmp(b0),
+        _ => a.cmp(b),
     }
 }
 
